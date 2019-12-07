@@ -11,24 +11,27 @@ type OpCode struct {
 	parmModes [3]int
 }
 
-type InputBuffer struct {
-	buff     []int
-	position int
+type VM struct {
+	ID            int
+	Pgm           *Program
+	Input         chan int
+	Output        chan int
+	StartingPhase int
 }
 
 type Program struct {
-	code   []int
-	output []int
-	debug  bool
+	code  []int
+	debug bool
 }
 
-func (p *Program) GetOutput() (int, error) {
-	if len(p.output) == 0 {
-		return 0, fmt.Errorf("EOF")
-	}
-	i := p.output[0]
-	p.output = p.output[1:]
-	return i, nil
+func NewVM(id int, pgm *Program, startingPhase int, in, out chan int) *VM {
+	vm := new(VM)
+	vm.ID = id
+	vm.Pgm = pgm.Copy()
+	vm.Input = in
+	vm.Output = out
+	vm.StartingPhase = startingPhase
+	return vm
 }
 
 func Compile(input string) *Program {
@@ -63,18 +66,22 @@ func decodeOp(op int) OpCode {
 	return result
 }
 
-func (p *Program) ExecPgm(inputBuffer InputBuffer) (err error) {
+func (vm *VM) ExecPgm() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = r.(error)
 		}
 	}()
 	ip := 0
+	p := vm.Pgm
 PGMLOOP:
 	for {
 		opcode := decodeOp(p.code[ip])
 		switch opcode.op {
 		case 99:
+			if p.debug {
+				fmt.Printf("%02d: HALT\n", vm.ID)
+			}
 			break PGMLOOP
 		case 1: // Addition
 			v1, v2 := getParamsValues(opcode, p.code, ip)
@@ -87,16 +94,23 @@ PGMLOOP:
 			p.code[op3] = v1 * v2
 			ip += 4
 		case 3: // Input
-			p.code[p.code[ip+1]] = inputBuffer.Get()
+			var b int
+			if vm.StartingPhase >= 0 {
+				b = vm.StartingPhase
+				vm.StartingPhase = -1
+			} else {
+				b = <-vm.Input
+			}
+			p.code[p.code[ip+1]] = b
 			if p.debug {
-				fmt.Printf("INPUT:%d\n", p.code[p.code[ip+1]])
+				fmt.Printf("%02d: INPUT:%d\n", vm.ID, b)
 			}
 			ip += 2
 		case 4: // Output
 			b := p.code[p.code[ip+1]]
-			p.output = append(p.output, b)
+			vm.Output <- b
 			if p.debug {
-				fmt.Printf("OUTPUT:%d\n", b)
+				fmt.Printf("%02d: OUTPUT:%d\n", vm.ID, b)
 			}
 			ip += 2
 		case 5: // Jump-if-true
@@ -148,17 +162,4 @@ func getParamsValues(opcode OpCode, pgm []int, ip int) (int, int) {
 		v2 = pgm[v2]
 	}
 	return v1, v2
-}
-
-func (buffer *InputBuffer) Push(x int) {
-	buffer.buff = append(buffer.buff, x)
-}
-
-func (buffer *InputBuffer) Get() int {
-	if buffer.position >= len(buffer.buff) {
-		panic("EOF")
-	}
-	x := buffer.buff[buffer.position]
-	buffer.position++
-	return x
 }

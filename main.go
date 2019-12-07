@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 
 	"cloud.google.com/aoc2019/day7/intcode"
 )
@@ -12,21 +13,18 @@ func main() {
 	maxThrust := 0
 	maxPhase := [5]int{}
 	p := [5]int{}
-	for p[0] = 0; p[0] < 5; p[0]++ {
-		for p[1] = 0; p[1] < 5; p[1]++ {
-			for p[2] = 0; p[2] < 5; p[2]++ {
-				for p[3] = 0; p[3] < 5; p[3]++ {
-					for p[4] = 0; p[4] < 5; p[4]++ {
-						t := 0
-						t = runAmp(pgm, p[0], t)
-						t = runAmp(pgm, p[1], t)
-						t = runAmp(pgm, p[2], t)
-						t = runAmp(pgm, p[3], t)
-						t = runAmp(pgm, p[4], t)
-						if t > maxThrust && unique(p) {
-							maxThrust = t
-							for i := 0; i < 5; i++ {
-								maxPhase[i] = p[i]
+	for p[0] = 5; p[0] < 10; p[0]++ {
+		for p[1] = 5; p[1] < 10; p[1]++ {
+			for p[2] = 5; p[2] < 10; p[2]++ {
+				for p[3] = 5; p[3] < 10; p[3]++ {
+					for p[4] = 5; p[4] < 10; p[4]++ {
+						if unique(p) {
+							t := runAmps(pgm, p)
+							if t > maxThrust {
+								maxThrust = t
+								for i := 0; i < 5; i++ {
+									maxPhase[i] = p[i]
+								}
 							}
 						}
 					}
@@ -38,7 +36,7 @@ func main() {
 }
 
 func unique(p [5]int) bool {
-	digits := [5]bool{}
+	digits := [10]bool{}
 	digits[p[0]] = true
 	for i := 1; i < len(p); i++ {
 		if digits[p[i]] {
@@ -49,17 +47,31 @@ func unique(p [5]int) bool {
 	return true
 }
 
-func runAmp(pgm *intcode.Program, phase int, inputThrust int) int {
-	buff := intcode.InputBuffer{}
-	buff.Push(phase)
-	buff.Push(inputThrust)
-	temp := pgm.Copy()
-	if err := temp.ExecPgm(buff); (err != nil) != false {
-		panic(err)
+func runAmps(pgm *intcode.Program, phases [5]int) int {
+	var (
+		vm [5]*intcode.VM
+		c  [5]chan int
+		wg sync.WaitGroup
+	)
+	c[0] = make(chan int, 1)
+	c[0] <- 0
+	for i := 1; i < 5; i++ {
+		c[i] = make(chan int)
 	}
-	t, err := temp.GetOutput()
-	if err != nil {
-		panic(err)
+	vm[0] = intcode.NewVM(1, pgm, phases[0], c[0], c[1])
+	vm[1] = intcode.NewVM(2, pgm, phases[1], c[1], c[2])
+	vm[2] = intcode.NewVM(3, pgm, phases[2], c[2], c[3])
+	vm[3] = intcode.NewVM(4, pgm, phases[3], c[3], c[4])
+	vm[4] = intcode.NewVM(5, pgm, phases[4], c[4], c[0])
+	wg.Add(5)
+	for i := 0; i < 5; i++ {
+		go func(x int) {
+			vm[x].Pgm.Debug(false)
+			vm[x].ExecPgm()
+			wg.Done()
+		}(i)
 	}
+	wg.Wait()
+	t := <-c[0]
 	return t
 }
